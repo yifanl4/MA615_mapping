@@ -1,0 +1,169 @@
+---
+title: "Mapping Assignment"
+author: "Haoran Li, Haoran Su, Xijia Luo, Yifan Liu"
+date: "2020/10/27"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(hurricaneexposuredata)
+library(usmap)
+library(tmap)
+library(sp)
+library(sf)
+library(viridis)
+library(tidyverse)
+library(maps)
+```
+
+```{r cars}
+# Data Cleaning
+# obtain county map data
+t_map=st_as_sf(map('county',plot=F,fill=T))
+region=fips_info(unique(force(rain)$fips))
+region$subregion=region$county%>%
+  str_replace(' County','')%>%
+  str_replace('. ',' ')%>%
+  tolower()
+region$region=tolower(region$full)
+m=map_data('county')
+map=m[m$region%in%region$region&m$subregion%in%region$subregion,]
+for(i in 1:nrow(region)){
+  map$fips[map$region==region$region[i]
+           &map$subregion==region$subregion[i]]=region$fips[i]
+} 
+```
+
+```{r}
+# obtain data of Floyd and Allison
+Floyd_track=force(hurr_tracks)%>%filter(storm_id=='Floyd-1999')
+Floyd_rain=force(rain)%>%
+  filter(storm_id=='Floyd-1999')%>%
+  group_by(fips)%>%
+  summarise(storm_id=storm_id[1],
+            precip=sum(precip))
+
+Allison_track=force(hurr_tracks)%>%filter(storm_id=='Allison-2001')
+Allison_rain=force(rain)%>%
+  filter(storm_id=='Allison-2001')%>%
+  group_by(fips)%>%
+  summarise(storm_id=storm_id[1],
+            precip=sum(precip))
+Allison_rain=filter(Allison_rain,precip>175)
+Allison_dist=force(closest_dist)%>%filter(storm_id=='Allison-2001')
+Allison_dist=filter(Allison_dist,storm_dist<500)
+Allison_rain=filter(Allison_rain,fips%in%Allison_dist$fips)
+```
+
+
+## `ggplot2` for mapping
+
+```{r pressure, echo=FALSE}
+#Floyd_map
+Floyd_map=map
+for(i in 1:nrow(Floyd_map)){
+  Floyd_map$rain[i]=Floyd_rain$precip[Floyd_rain$fips==Floyd_map$fips[i]]
+}
+ggplot()+
+  geom_polygon(data=Floyd_map,mapping=aes(long,lat,group=group,fill=rain))+
+  scale_fill_continuous(low='white',high='blue', name='Rainfall (mm)')+
+  geom_path(data=Floyd_map,mapping=aes(long,lat,group=group))+
+  geom_path(data=Floyd_track,mapping=aes(longitude,latitude))+
+  ggtitle("Floyd-1999")+
+  theme(plot.title=element_text(hjust=0.4))
+```
+
+```{r}
+#Allison_map
+Allison_map=map
+for(i in 1:nrow(Allison_rain)){
+  Allison_map$rain[Allison_map$fips==Allison_rain$fips[i]]=Allison_rain$precip[i]
+}
+ggplot()+
+  geom_polygon(data=Allison_map,mapping=aes(long,lat,group=group,fill=rain))+
+  scale_fill_continuous(low='white',high='blue', name='Rainfall (mm)')+
+  geom_path(data=Allison_map,mapping=aes(long,lat,group=group))+
+  geom_path(data=Allison_track,mapping=aes(longitude,latitude))+
+  ggtitle("Allison-2001")+
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+## `tmap` for mapping
+
+```{r}
+#Floyd_map
+j=1
+for(i in unique(Floyd_map$fips)){
+  x=filter(Floyd_map,fips==i)[1,]
+  if(j==1)t_Floyd_rain=data.frame(ID=paste(x$region,',',
+                                           x$subregion,sep=''),
+                                  Rainfall=x$rain)
+  else t_Floyd_rain=rbind(t_Floyd_rain,
+                          data.frame(ID=paste(x$region,',',
+                                              x$subregion,sep=''),
+                                     Rainfall=x$rain))
+  j=j+1
+}
+
+t_Floyd_rain=right_join(t_map,t_Floyd_rain,by="ID")
+t_Floyd_break=quantile(na.omit(t_Floyd_rain$Rainfall),seq(0,1,0.2))
+t_Floyd_track=cbind(Floyd_track$longitude,Floyd_track$latitude)%>%
+  Line()%>%Lines(ID='Floyd-1999')%>%
+  list()%>%SpatialLines()
+
+tm_shape(t_Floyd_rain)+
+  tm_polygons(border.col="white",lwd=0.1,colorNA=NULL,
+              col='Rainfall',style="cont",
+              breaks=t_Floyd_break,title="Precip",
+              palette=viridis(n=2,direction=-1,option="D"))+
+  tm_legend(position=c("right","bottom"),
+            legend.title.size=1.5,
+            legend.text.size=1) +
+  tm_shape(t_Floyd_track) +
+  tm_lines(col='red')+
+  tm_layout(main.title='Floyd-1999',
+            main.title.position="center") 
+```
+
+```{r}
+#Allison_map
+j=1
+for(i in unique(Allison_map$fips)){
+  x=filter(Allison_map,fips==i)[1,]
+  if(j==1)t_Allison_rain=data.frame(ID=paste(x$region,',',
+                                             x$subregion,sep=''),
+                                    Rainfall=x$rain)
+  
+  else t_Allison_rain=rbind(t_Allison_rain,
+                            data.frame(ID=paste(x$region,',',
+                                                x$subregion,sep=''),
+                                       Rainfall=x$rain))
+  j=j+1
+}
+
+t_Allison_rain=right_join(t_map,t_Allison_rain,by="ID")
+t_Allison_break=quantile(na.omit(t_Allison_rain$Rainfall),seq(0,1,0.2))
+t_Allison_track=cbind(Allison_track$longitude,Allison_track$latitude)%>%
+  Line()%>%Lines(ID='Allison-2001')%>%
+  list()%>%SpatialLines()
+
+tm_shape(t_Allison_rain)+
+  tm_polygons(border.col="white",lwd=0.1,
+              col='Rainfall',style="cont",
+              breaks=t_Allison_break,title="Precip",
+              palette=viridis(n=2,direction=-1,option="D"))+
+  tm_legend(position=c("right","bottom"),
+            legend.title.size=1.5,
+            legend.text.size=1) +
+  tm_shape(t_Allison_track) +
+  tm_lines(col='red')+
+  tm_layout(main.title='Allison-2001',
+            main.title.position="center") 
+
+```
+
+
